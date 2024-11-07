@@ -18,7 +18,7 @@ exports.getPhonetic = (lang, wordToTranslate, callback) => {
                 return callback(err);
             }
             // If the key is found, simply format the result as JSON and return it
-            if (result !== null) {
+            if (result) {
                 const data = {
                     language: lang,
                     word: wordToTranslate,
@@ -26,55 +26,27 @@ exports.getPhonetic = (lang, wordToTranslate, callback) => {
                 };
                 return callback(null, data);
             }
-            // The word is not cached in Redis. Retrieve the info from collinsdictionary.com
-            if (result === null) {
-                // Based on desired language, we need to format the proper URL
-                let langURL = '';
-                switch (lang) {
-                case 'fr':
-                    langURL = 'french-english';
-                    break;
-                default:
-                    langURL = 'english';
-                    break;
+            // The word is not cached in Redis. Retrieve the info from cambridge.com
+            const url = `https://dictionary.cambridge.org/dictionary/english/${wordToTranslate}`;
+            // Using request package we will retrieve info from desired URL
+            request(url, (error, response, html) => {
+                if (!error) {
+                    // Using cheerio package we will extract the phonetic word from page
+                    const $ = cheerio.load(html);
+                    const phoneticWord = $(
+                      '[class="ipa dipa lpr-2 lpl-1"]'
+                    ).first().text();
+                    // Format the result as JSON, store it in Redis and return it
+                    const data = {
+                        language: lang,
+                        word: wordToTranslate,
+                        phonetic: phoneticWord,
+                    };
+                    client.set(key, phoneticWord);
+
+                    return callback(null, data);
                 }
-                const url = `http://www.collinsdictionary.com/dictionary/${langURL}/${wordToTranslate}`;
-                // Using request package we will retrieve info from desired URL
-                request(url, (error, response, html) => {
-                    if (!error) {
-                        // Using cheerio package we will extract the phonetic word from page
-                        const $ = cheerio.load(html);
-                        const phoneticWords = $('span.pron').text();
-                        let phoneticWord = '';
-
-                        // Based on language, format the result correctly, as they vary per language
-                        if (lang === 'fr') {
-                            const regExp = /\(([^)]+)\)/;
-                            const matches = regExp.exec(phoneticWords);
-                            phoneticWord = matches[1];
-                        }
-                        if (lang === 'en') {
-                            const string = phoneticWords.split(' ');
-                            phoneticWord = string[0];
-                        }
-                        // Remove spaces & special characters from word
-                        phoneticWord = phoneticWord.replace(/(\r\n|\n|\r)/gm, '');
-                        phoneticWord = phoneticWord.replace(/ /g, '');
-                        phoneticWord = phoneticWord.trim();
-                        phoneticWord = phoneticWord.replace(/[|&;$%@<>()+]/g, '');
-
-                        // Format the result as JSON, store it in Redis and return it
-                        const data = {
-                            language: lang,
-                            word: wordToTranslate,
-                            phonetic: phoneticWord,
-                        };
-                        client.set(key, phoneticWord);
-
-                        return callback(null, data);
-                    }
-                });
-            }
+            });
         });
     });
 };
